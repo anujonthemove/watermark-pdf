@@ -1,0 +1,57 @@
+services:
+  minio:
+    image: minio/minio
+    container_name: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # Console UI
+    environment:
+      MINIO_ROOT_USER: miniouser
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mc:
+    image: minio/mc
+    container_name: minio_client
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until (mc alias set local http://minio:9000 miniouser minioadmin);
+      do sleep 5; done;
+      if ! mc ls local | grep -q watermarkpdf; then 
+        mc mb local/watermarkpdf; 
+        mc mb local/watermarkpdf/uploads;
+        mc mb local/watermarkpdf/downloads;
+        mc mb local/watermarkpdf/watermarks;
+      fi;
+      while true; do sleep 300; done;
+      "
+
+  fastapi_app:
+    build:
+      context: ./backend  # Path to the backend directory containing the Dockerfile
+      dockerfile: Dockerfile
+    container_name: fastapi_app
+    ports:
+      - "8000:8000"  # Expose FastAPI app on port 8000
+    environment:
+      # MINIO_ENDPOINT: http://minio:9000
+      MINIO_HOST: minio
+      MINIO_PORT: 9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./backend/app:/app/app  # Mount app code for development
+    depends_on:
+      - minio
+
+volumes:
+  minio_data:
